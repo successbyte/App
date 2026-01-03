@@ -1,0 +1,12 @@
+diff --git a/node_modules/@rock-js/tools/dist/src/lib/spawn.js b/node_modules/@rock-js/tools/dist/src/lib/spawn.js
+index a993a6e..ef995f5 100644
+--- a/node_modules/@rock-js/tools/dist/src/lib/spawn.js
++++ b/node_modules/@rock-js/tools/dist/src/lib/spawn.js
+@@ -38,6 +38,6 @@ function setupChildProcessCleanup(childProcess) {
+         process.off('SIGINT', sigintHandler);
+         process.off('SIGTERM', sigtermHandler);
+     };
+-    childProcess.nodeChildProcess.finally(cleanup);
++    childProcess.nodeChildProcess.finally(cleanup).catch(() => {});
+ }
+ //# sourceMappingURL=spawn.js.map
