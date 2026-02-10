@@ -1,12 +1,14 @@
 import React, {useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react';
-import type {LayoutChangeEvent} from 'react-native';
+import type {GestureResponderEvent, LayoutChangeEvent} from 'react-native';
 // Animated required for side panel navigation
 // eslint-disable-next-line no-restricted-imports
 import {Animated, DeviceEventEmitter, View} from 'react-native';
 import ColorSchemeWrapper from '@components/ColorSchemeWrapper';
 import NavigationBar from '@components/NavigationBar';
+import {PressableWithoutFeedback} from '@components/Pressable';
 import ScreenWrapperOfflineIndicatorContext from '@components/ScreenWrapper/ScreenWrapperOfflineIndicatorContext';
 import useKeyboardState from '@hooks/useKeyboardState';
+import useLocalize from '@hooks/useLocalize';
 import usePrevious from '@hooks/usePrevious';
 import useResponsiveLayout from '@hooks/useResponsiveLayout';
 import useSafeAreaInsets from '@hooks/useSafeAreaInsets';
@@ -15,8 +17,10 @@ import useStyleUtils from '@hooks/useStyleUtils';
 import useTheme from '@hooks/useTheme';
 import useThemeStyles from '@hooks/useThemeStyles';
 import useWindowDimensions from '@hooks/useWindowDimensions';
+import Accessibility from '@libs/Accessibility';
 import ComposerFocusManager from '@libs/ComposerFocusManager';
 import {canUseTouchScreen as canUseTouchScreenCheck} from '@libs/DeviceCapabilities';
+import getPlatform from '@libs/getPlatform';
 import NarrowPaneContext from '@libs/Navigation/AppNavigator/Navigators/NarrowPaneContext';
 import Overlay from '@libs/Navigation/AppNavigator/Navigators/Overlay';
 import Navigation from '@libs/Navigation/Navigation';
@@ -25,6 +29,8 @@ import CONST from '@src/CONST';
 import ModalContext from './ModalContext';
 import ReanimatedModal from './ReanimatedModal';
 import type BaseModalProps from './types';
+
+const MAX_DISMISS_BUTTON_FOCUS_RETRIES = 5;
 
 function BaseModal({
     isVisible,
@@ -75,7 +81,10 @@ function BaseModal({
     const theme = useTheme();
     const styles = useThemeStyles();
     const StyleUtils = useStyleUtils();
+    const {translate} = useLocalize();
+    const isScreenReaderEnabled = Accessibility.useScreenReaderStatus();
     const {windowWidth, windowHeight} = useWindowDimensions();
+    const isWeb = getPlatform() === CONST.PLATFORM.WEB;
     // We need to use isSmallScreenWidth instead of shouldUseNarrowLayout to apply correct modal width
     const canUseTouchScreen = canUseTouchScreenCheck();
     // eslint-disable-next-line rulesdir/prefer-shouldUseNarrowLayout-instead-of-isSmallScreenWidth
@@ -92,6 +101,7 @@ function BaseModal({
 
     const shouldCallHideModalOnUnmount = useRef(false);
     const hideModalCallbackRef = useRef<(callHideCallback: boolean) => void>(undefined);
+    const dismissButtonRef = useRef<HTMLDivElement | View | null>(null);
 
     const wasVisible = usePrevious(isVisible);
 
@@ -176,8 +186,8 @@ function BaseModal({
         onModalShow();
     }, [onModalShow, shouldSetModalVisibility, type]);
 
-    const handleBackdropPress = (e?: KeyboardEvent) => {
-        if (e?.key === CONST.KEYBOARD_SHORTCUTS.ENTER.shortcutKey) {
+    const handleBackdropPress = (e?: KeyboardEvent | GestureResponderEvent) => {
+        if (e && 'key' in e && e.key === CONST.KEYBOARD_SHORTCUTS.ENTER.shortcutKey) {
             return;
         }
 
@@ -261,6 +271,46 @@ function BaseModal({
         ],
     );
 
+    const shouldShowBottomDockedDismissButton = isSmallScreenWidth && type === CONST.MODAL.MODAL_TYPE.BOTTOM_DOCKED && !!(onBackdropPress ?? onClose) && isScreenReaderEnabled;
+
+    const initialFocusTarget = useMemo(() => {
+        if (!isWeb || !shouldShowBottomDockedDismissButton) {
+            return initialFocus;
+        }
+        return () => dismissButtonRef.current ?? document.body;
+    }, [initialFocus, isWeb, shouldShowBottomDockedDismissButton]);
+
+    useEffect(() => {
+        if (!isWeb || !isVisible || !shouldShowBottomDockedDismissButton) {
+            return;
+        }
+
+        let retries = 0;
+        let frameID: number | undefined;
+        const focusDismissButton = () => {
+            const target = dismissButtonRef.current;
+            if (target && 'focus' in target && typeof target.focus === 'function') {
+                target.focus();
+                return;
+            }
+
+            if (retries >= MAX_DISMISS_BUTTON_FOCUS_RETRIES) {
+                return;
+            }
+            retries++;
+            frameID = requestAnimationFrame(focusDismissButton);
+        };
+
+        frameID = requestAnimationFrame(focusDismissButton);
+
+        return () => {
+            if (frameID === undefined) {
+                return;
+            }
+            cancelAnimationFrame(frameID);
+        };
+    }, [isWeb, isVisible, shouldShowBottomDockedDismissButton]);
+
     const modalPaddingStyles = useMemo(() => {
         const paddings = StyleUtils.getModalPaddingStyles({
             shouldAddBottomSafeAreaMargin,
@@ -343,7 +393,7 @@ function BaseModal({
                         onSwipeComplete={onClose}
                         swipeDirection={swipeDirection}
                         shouldPreventScrollOnFocus={shouldPreventScrollOnFocus}
-                        initialFocus={initialFocus}
+                        initialFocus={initialFocusTarget}
                         swipeThreshold={swipeThreshold}
                         isVisible={isVisible}
                         backdropColor={theme.overlay}
@@ -375,6 +425,19 @@ function BaseModal({
                             ref={ref}
                             fsClass={forwardedFSClass}
                         >
+                            {shouldShowBottomDockedDismissButton && (
+                                <PressableWithoutFeedback
+                                    ref={dismissButtonRef}
+                                    onPress={handleBackdropPress}
+                                    accessibilityRole={CONST.ROLE.BUTTON}
+                                    accessibilityLabel={translate('modal.dismissDialog')}
+                                    sentryLabel="Modal-DismissDialog"
+                                    style={styles.bottomDockedModalDismissButton}
+                                    shouldUseAutoHitSlop
+                                >
+                                    <View />
+                                </PressableWithoutFeedback>
+                            )}
                             <ColorSchemeWrapper>{children}</ColorSchemeWrapper>
                         </Animated.View>
                         {!keyboardStateContextValue?.isKeyboardActive && <NavigationBar />}
